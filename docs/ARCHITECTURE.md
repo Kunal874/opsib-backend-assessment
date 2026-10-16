@@ -62,6 +62,30 @@ The three pure cores (rule, eligibility, state machine) are unit-tested without 
 
 Full DDL: [`migrations/001_init.sql`](../migrations/001_init.sql).
 
+### Record grain — what one row means
+
+Getting the grain wrong is how shortfalls get double-counted or hidden, so every table has exactly one
+meaning per row, and the rule never counts CSV rows or matches on product names.
+
+| Table | One row is… | Not… | Consequence in the fixtures |
+|---|---|---|---|
+| `import_rows` | one physical line of one uploaded file | a business fact | re-importing a file adds new raw rows but no new facts |
+| `purchase_order_lines` | one ERP PO-line **source record** (`source_record_id`) | one CSV row | the repeated `ERP-PO506-L1` line is stored once |
+| `goods_receipt_lines` | one WMS receipt-line **source record** | one CSV row, one GRN, or one PO line | PO-501 has two (`GRN-501-A`, `GRN-501-B`) and they are summed; the repeated `WMS-GRN506-A-L1` is one fact, so PO-506 is short 10, not 0 |
+| `product_aliases` / `location_aliases` | one mapping for one `(source_system, external_id)` | one product or one store | `ERP-SKU-001` and `WMS-BRC-001` are two rows for one `SKU-001` |
+| `employees` | one person, by HRMS ID | one person per store | HR-501 has a region and no store |
+| `workforce_status` | one availability **observation** `(employee, observed_at)` | one row per employee | a later sample (e.g. HR-401 `OFF_SHIFT` at 14:55) supersedes an earlier one for routing |
+| `exceptions` | one business case per `(tenant, rule type, PO number + line)` | one detection run | re-runs update or close the same case |
+| `tasks` | one unit of work per `(exception, task type)` | one assignment | reassigning changes the assignee, not the task |
+| `audit_events` | one change, appended | current state | the history is never rewritten |
+
+How detection keeps that grain: PO facts are grouped by business line `(po_number, line_number)`. If two
+different source records claim one business line, the line is `NOT_EVALUABLE / AMBIGUOUS_PO_LINE` rather
+than summed. Receipt facts are linked by `(po_number, po_line_number)`, de-duplicated by
+`source_record_id`, converted to the base unit through their own alias, and only then summed. Tests:
+`test_partial_receipts_are_summed`, `test_repeated_receipt_counts_once`, `test_six_required_scenarios`
+(PO-506 = 10), and `test_two_source_records_for_one_po_line_are_ambiguous`.
+
 ## 4. Flows
 
 **Ingestion** (`POST /imports/{dataset}` or `python -m app.cli load-fixtures`)

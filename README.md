@@ -180,6 +180,14 @@ reached, task by task:
 
 **Known limits (deliberate, with the upgrade path):**
 
+- **Stale evidence for detection is not detected.** The explicit "can't evaluate" path exists: a line is
+  `NOT_EVALUABLE` with a reason and is listed in `GET /data-quality`. It covers missing, unmapped,
+  conflicting and ambiguous evidence, and availability samples are refused when stale. What it can't
+  judge is whether the **ERP/WMS feeds themselves** are out of date, because the supplied exports carry no
+  extraction timestamp. Production: record each feed's extract time on import, and mark a line
+  `NOT_EVALUABLE / STALE_RECEIPT_FEED` when the latest WMS extract is older than the PO line's deadline.
+  Not having seen a receipt is not the same as the receipt not existing.
+
 - A changed value for an existing source ID (e.g. HRMS later sends HR-102 as `INACTIVE`, or a PO line
   becomes `CANCELLED`) is a **conflict for review**, not an update. Production: versioned master data /
   snapshot sequencing, plus a conflict-resolution endpoint (not built).
