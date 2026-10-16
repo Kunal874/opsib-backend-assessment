@@ -1,0 +1,26 @@
+name: opsib
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: opsib
+      POSTGRES_PASSWORD: opsib          # local dev only — not a real secret
+      POSTGRES_DB: opsib
+    ports: ["55432:5432"]               # host 55432: 5432-5434 are commonly taken by other Postgres installs
+    volumes: ["./docker/initdb:/docker-entrypoint-initdb.d:ro"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opsib"]
+      interval: 2s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://opsib:opsib@db:5432/opsib
+      TEST_DATABASE_URL: postgresql://opsib:opsib@db:5432/opsib_test
+    ports: ["8000:8000"]
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "python -m app.cli migrate && uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8000"
