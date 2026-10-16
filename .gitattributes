@@ -1,0 +1,4 @@
+# Source files: LF everywhere, so Docker/Linux see the same bytes as Windows.
+* text=auto eol=lf
+# Supplied fixtures must stay byte-identical to what OPSiB sent (CRLF included).
+fixtures/** -text
