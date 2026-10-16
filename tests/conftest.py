@@ -42,3 +42,13 @@ def conn(settings, _schema):
 def client(settings, conn):
     with TestClient(create_app(settings)) as c:
         yield c
+
+
+def load_fixture_pack(conn, settings, directory: Path = FIXTURES) -> dict[str, dict]:
+    """Import every supplied CSV through the real importer; returns dataset -> import report."""
+    from app.ingestion.importer import LOAD_ORDER, import_csv
+
+    return {
+        name: import_csv(conn, settings.tenant_id, name, (directory / f"{name}.csv").read_bytes(), f"{name}.csv")
+        for name in LOAD_ORDER
+    }

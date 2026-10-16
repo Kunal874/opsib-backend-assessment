@@ -1,0 +1,2 @@
+source_record_id,po_number,line_number,supplier_code,location_code,item_code,ordered_qty,ordered_uom,status
+ERP-PO701-L1,PO-701,1,SUP-07,MUM-014,ERP-SKU-001,10,EA,OPEN
