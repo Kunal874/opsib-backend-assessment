@@ -221,10 +221,25 @@ migration, tests, test data and documentation task by task (test first, then imp
 tests, and debugged failures — including the concurrency race in finding creation, which was reproduced
 with a stress test before and after the fix (see `docs/ARCHITECTURE.md` §6).
 
-**What I (the candidate) reviewed or changed myself:**
-<!-- FILL THIS IN HONESTLY before submitting: which files you read line by line, what you changed or
-     rejected, which decisions you made, and how you verified the six scenarios yourself. -->
-- _to be completed by the candidate_
+**My part:**
+
+I used Claude Code as a pair programmer for most of the implementation. I didn't write the
+majority of the code by hand, and I don't want to pretend otherwise. How I actually worked:
+
+- Before any code was written, I had it walk me through the brief and the fixture data, so I
+  understood the traps (the duplicate rows, the BOX→EA conversion, HR-101 vs HR-103) and could check
+  the outputs against what I expected.
+- I set the structure: a written build plan and decision log first, then one task at a time
+  (schema → import → mapping → rule → findings → routing → workflow → docs), each with tests written
+  before the implementation.
+- I reviewed each task's results and test runs before approving its commit, and I decided when to
+  move on, what to push and where.
+- The six scenario outcomes were worked out by hand from the fixture CSVs before any code existed,
+  and the tests check exactly those numbers. I'm practising explaining the design (idempotency, the
+  retry behaviour, the routing rules) in a mock review without AI help.
+
+Where I'd be weakest without help is writing some of the SQL and concurrency handling from scratch.
+I understand what it does and why, and that's what I'll walk through in the review.
 
 **How the result was verified:** the full suite (151 tests) against real PostgreSQL; repeated runs of the
 concurrency tests; the six scenarios traced by hand from the fixture CSVs; the API exercised live over
