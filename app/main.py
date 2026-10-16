@@ -4,7 +4,7 @@ Run: uvicorn --factory app.main:create_app
 """
 from fastapi import FastAPI
 
-from app.api import detection, imports
+from app.api import detection, imports, tasks
 from app.config import Settings, load_settings
 from app.errors import install_error_handlers
 from app.log import configure_logging
@@ -24,4 +24,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(imports.router)
     app.include_router(detection.router)
+    app.include_router(tasks.router)
     return app
