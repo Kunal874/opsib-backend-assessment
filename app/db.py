@@ -1,8 +1,11 @@
-"""Postgres access: connections, the SQL migration runner, and table discovery."""
+"""Postgres access: connections, the SQL migration runner, table discovery, JSON parameters."""
+import json
 from pathlib import Path
+from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations"
 
@@ -30,6 +33,19 @@ def migrate(database_url: str, migrations_dir: Path = MIGRATIONS_DIR) -> list[st
                 conn.execute("INSERT INTO schema_migrations (filename) VALUES (%s)", (path.name,))
             applied.append(path.name)
     return applied
+
+
+def to_jsonb(value: Any) -> Jsonb:
+    """A JSONB parameter that also accepts Decimal, datetime and UUID values (written as strings)."""
+    return Jsonb(value, dumps=lambda v: json.dumps(v, default=_json_default))
+
+
+def _json_default(value: Any) -> str:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if hasattr(value, "normalize"):  # Decimal: "8", never "8.000" or "8E+0"
+        return format(value.normalize(), "f")
+    return str(value)
 
 
 def all_tables(conn: psycopg.Connection) -> list[str]:

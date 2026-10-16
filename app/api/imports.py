@@ -9,6 +9,7 @@ from app.api.deps import get_conn, get_settings
 from app.config import Settings
 from app.errors import AppError
 from app.ingestion.importer import get_import_report, import_csv
+from app.quality import data_quality_report
 
 router = APIRouter(tags=["imports"])
 
@@ -32,3 +33,10 @@ async def create_import(dataset: str, request: Request, source_filename: str | N
 def read_import(import_id: uuid.UUID, conn: psycopg.Connection = Depends(get_conn),
                 settings: Settings = Depends(get_settings)) -> dict:
     return get_import_report(conn, settings.tenant_id, import_id)
+
+
+@router.get("/data-quality", tags=["data quality"],
+            summary="Rejected rows, open conflicts, unmapped references, not-evaluable lines")
+def read_data_quality(conn: psycopg.Connection = Depends(get_conn),
+                      settings: Settings = Depends(get_settings)) -> dict:
+    return data_quality_report(conn, settings.tenant_id)

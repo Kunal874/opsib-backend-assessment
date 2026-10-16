@@ -64,6 +64,8 @@ class ResolvedPoLine:
     region_id: str | None = None
     expected_qty: Decimal | None = None  # in base_uom
     base_uom: str | None = None
+    ordered_qty: Decimal | None = None   # as the source sent it, e.g. 10 ...
+    ordered_uom: str | None = None       # ... BOX — kept for explanations
     mapping_refs: tuple[str, ...] = ()
     issue: str | None = None  # set => canonical fields are None
 
@@ -122,7 +124,8 @@ def resolve_location(index: AliasIndex, source_system: str, code: str | None) ->
 def resolve_po_line(row: Mapping, index: AliasIndex) -> ResolvedPoLine:
     facts = dict(source_record_id=row["source_record_id"], po_number=row["po_number"],
                  line_number=row["line_number"], status=row["status"],
-                 expected_receipt_by=row["expected_receipt_by"])
+                 expected_receipt_by=row["expected_receipt_by"],
+                 ordered_qty=row["ordered_qty"], ordered_uom=row["ordered_uom"])
     system = row.get("source_system", "ERP")
     try:
         location = _location(index, system, row["location_code"])
