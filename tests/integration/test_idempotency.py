@@ -47,3 +47,4 @@ def test_concurrent_detection_creates_each_exception_once(conn, settings):
     assert conn.execute("SELECT count(*) AS n FROM exceptions").fetchone()["n"] == 3
     created = conn.execute("SELECT count(*) AS n FROM audit_events WHERE event_type = 'FINDING_CREATED'").fetchone()
     assert created["n"] == 3
+    assert conn.execute("SELECT count(*) AS n FROM tasks").fetchone()["n"] == 3

@@ -13,11 +13,15 @@ import psycopg
 
 from app.config import Settings
 from app.db import to_jsonb
-from app.detection.findings import build_finding, business_key, close_if_open, fmt_qty, upsert_finding
+from app.detection.findings import (build_finding, business_key, close_if_open, exception_id, fmt_qty,
+                                    upsert_finding)
 from app.detection.shortfall import RULE_VERSION, Evaluation, Outcome, evaluate_shortfall
 from app.errors import AppError
 from app.log import log
 from app.mapping.resolver import AliasIndex, load_alias_index, resolve_po_line, resolve_receipt
+from app.routing.eligibility import RoutingPolicy, choose_assignee
+from app.routing.service import load_candidates
+from app.workflows.tasks import cancel_open_tasks, create_task_for_exception, reopen_and_route
 
 CHANGE_KINDS = ("created", "updated", "unchanged", "reopened", "closed")
 
@@ -27,10 +31,12 @@ def run_detection(conn: psycopg.Connection, settings: Settings, as_of: datetime 
     if as_of.tzinfo is None:
         raise AppError(422, "VALIDATION_ERROR", "as_of must include a UTC offset")
     tenant_id, run_id = settings.tenant_id, uuid.uuid4()
-    outcomes, changes, lines = Counter(), Counter(), []
+    outcomes, changes, lines, tasks_created = Counter(), Counter(), [], 0
+    policy = RoutingPolicy(max_sample_age=settings.workforce_max_sample_age)
 
     with conn.transaction():
         index = load_alias_index(conn, tenant_id)
+        candidates = load_candidates(conn, tenant_id, as_of, index)  # roster as of the same business time
         po_rows = conn.execute(
             "SELECT * FROM purchase_order_lines WHERE tenant_id = %s ORDER BY po_number, line_number, source_record_id",
             (tenant_id,)).fetchall()
@@ -50,11 +56,20 @@ def run_detection(conn: psycopg.Connection, settings: Settings, as_of: datetime 
                 counted = set(ev.counted_receipt_ids)
                 refs = [ref for r in receipts if r.source_record_id in counted for ref in r.mapping_refs]
                 finding = build_finding(tenant_id, po, ev, as_of, refs)
-                changes[upsert_finding(conn, finding, run_id).lower()] += 1
+                change = upsert_finding(conn, finding, run_id)
+                changes[change.lower()] += 1
                 finding_id = str(finding["exception_id"])
-                # Task 7 hook: route a task for new / reopened findings.
+                decision = choose_assignee(candidates, po.canonical_location_id, as_of, policy)
+                if change == "REOPENED":
+                    reopen_and_route(conn, settings, finding, po.region_id, decision)
+                elif create_task_for_exception(conn, settings, finding, po.region_id, decision):  # no-op if it exists
+                    tasks_created += 1
             elif ev.outcome == Outcome.NO_SHORTFALL:
-                changes["closed"] += close_if_open(conn, tenant_id, business_key(po_number, line_number), ev, run_id)
+                key = business_key(po_number, line_number)
+                if close_if_open(conn, tenant_id, key, ev, run_id):
+                    changes["closed"] += 1
+                    cancel_open_tasks(conn, tenant_id, exception_id(tenant_id, key),
+                                      "Shortfall no longer present after re-evaluation")
             outcomes[ev.outcome] += 1
             lines.append(_line(po_number, line_number, ev, finding_id))
 
@@ -64,7 +79,7 @@ def run_detection(conn: psycopg.Connection, settings: Settings, as_of: datetime 
             "rule_version": RULE_VERSION,
             "counts": {o.value: outcomes[o] for o in Outcome},
             "exceptions": {k: changes[k] for k in CHANGE_KINDS},
-            "tasks_created": 0,
+            "tasks_created": tasks_created,
             "lines": lines,
         }
         conn.execute(

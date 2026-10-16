@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from app.detection.service import run_detection
 from app.ingestion.importer import import_csv
-from tests.conftest import load_fixture_pack
+from tests.conftest import DATA, load_fixture_pack
 
 IST = timezone(timedelta(hours=5, minutes=30))
 LATE_RECEIPT = (
@@ -16,6 +16,17 @@ LATE_RECEIPT = (
 
 def lines_by_po(run):
     return {line["po_number"]: line for line in run["lines"]}
+
+
+def task_of(conn, po_number):
+    return conn.execute("SELECT t.* FROM tasks t JOIN exceptions e USING (exception_id) WHERE e.po_number = %s",
+                        (po_number,)).fetchone()
+
+
+def task_events(conn, po_number):
+    return [r["event_type"] for r in conn.execute(
+        "SELECT a.event_type FROM audit_events a JOIN tasks t ON a.entity_id = t.task_id::text"
+        " JOIN exceptions e USING (exception_id) WHERE e.po_number = %s ORDER BY a.event_id", (po_number,))]
 
 
 def test_six_required_scenarios(conn, settings):
@@ -87,6 +98,11 @@ def test_shortfall_that_reappears_reopens_the_same_finding(conn, settings):
         "SELECT event_type FROM audit_events a JOIN exceptions e ON a.entity_id = e.exception_id::text"
         " WHERE e.po_number = 'PO-501' ORDER BY event_id")]
     assert events == ["FINDING_CREATED", "FINDING_CLOSED", "FINDING_REOPENED"]
+    # The task followed the case. At 12:00 no availability sample exists yet (they were taken at 14:50),
+    # so routing refuses to guess and leaves it for manual assignment both times.
+    assert task_events(conn, "PO-501") == ["TASK_CREATED", "ROUTING_NEEDS_MANUAL_ASSIGNMENT", "CANCEL", "REOPEN",
+                                           "ROUTING_NEEDS_MANUAL_ASSIGNMENT"]
+    assert task_of(conn, "PO-501")["status"] == "CREATED"
 
 
 def test_detection_over_http(client, conn, settings):
@@ -98,3 +114,53 @@ def test_detection_over_http(client, conn, settings):
     assert lines_by_po(later.json())["PO-503"]["outcome"] == "SHORTFALL"      # 50 ordered, 20 received
     naive = client.post("/detection/runs", params={"as_of": "2026-10-18T09:00:00"})
     assert naive.status_code == 422
+
+
+# ------------------------------------------------------------------ routing (Task C)
+
+def test_tasks_are_routed_to_eligible_people(conn, settings):
+    load_fixture_pack(conn, settings)
+    run = run_detection(conn, settings)
+    assert run["tasks_created"] == 3
+    rows = conn.execute("SELECT e.po_number, t.status, t.assignee_employee_id, t.region_id, t.due_at FROM tasks t"
+                        " JOIN exceptions e USING (exception_id) ORDER BY e.po_number").fetchall()
+    assert [(r["po_number"], r["status"], r["assignee_employee_id"]) for r in rows] == [
+        ("PO-501", "ASSIGNED", "HR-102"),   # HR-101 off shift, HR-103 inactive
+        ("PO-505", "ASSIGNED", "HR-401"),   # STORE-015 has no receiving associate -> store manager
+        ("PO-506", "ASSIGNED", "HR-102"),
+    ]
+    assert all(r["region_id"] == "REGION-MH" for r in rows)
+    assert rows[0]["due_at"] == settings.evaluation_time + settings.task_sla
+
+
+def test_routing_reasoning_is_persisted(conn, settings):
+    load_fixture_pack(conn, settings)
+    run_detection(conn, settings)
+    task = task_of(conn, "PO-501")
+    decision = conn.execute("SELECT actor, data FROM audit_events WHERE entity_id = %s AND event_type = 'ASSIGN'",
+                            (str(task["task_id"]),)).fetchone()
+    assert decision["actor"] == "system:router"
+    data = decision["data"]
+    assert (data["assignee_id"], data["matched_role"], data["policy_version"]) == \
+           ("HR-102", "receiving_associate", "routing/v1")
+    assert {(c["employee_id"], tuple(c["reasons"])) for c in data["checks"]} == \
+           {("HR-101", ("OFF_SHIFT",)), ("HR-102", ()), ("HR-103", ("NOT_ACTIVE",))}
+
+
+def test_no_eligible_person_leaves_task_for_manual_assignment(conn, settings):
+    load_fixture_pack(conn, settings)
+    import_csv(conn, settings.tenant_id, "workforce_status", (DATA / "workforce_hr401_off.csv").read_bytes())
+    run_detection(conn, settings)
+    task = task_of(conn, "PO-505")
+    assert (task["status"], task["assignee_employee_id"]) == ("CREATED", None)
+    assert task_events(conn, "PO-505") == ["TASK_CREATED", "ROUTING_NEEDS_MANUAL_ASSIGNMENT"]
+
+
+def test_late_receipt_cancels_the_open_task(conn, settings):
+    load_fixture_pack(conn, settings)
+    run_detection(conn, settings)
+    import_csv(conn, settings.tenant_id, "goods_receipt_lines", LATE_RECEIPT)
+    run_detection(conn, settings)
+    task = task_of(conn, "PO-501")
+    assert (task["status"], task["assignee_employee_id"]) == ("CANCELLED", "HR-102")   # history keeps who had it
+    assert task_events(conn, "PO-501") == ["TASK_CREATED", "ASSIGN", "CANCEL"]

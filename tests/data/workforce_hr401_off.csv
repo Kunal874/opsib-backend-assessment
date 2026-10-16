@@ -1,0 +1,2 @@
+source_employee_id,availability_status,shift_start,shift_end,observed_at
+HR-401,OFF_SHIFT,2026-10-16T09:00:00+05:30,2026-10-16T18:00:00+05:30,2026-10-16T14:55:00+05:30
