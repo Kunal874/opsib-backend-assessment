@@ -4,7 +4,8 @@ Run: uvicorn --factory app.main:create_app
 """
 from fastapi import FastAPI
 
-from app.api import detection, imports, tasks
+from app.ai.summary import DisabledProvider
+from app.api import detection, exceptions, imports, tasks
 from app.config import Settings, load_settings
 from app.errors import install_error_handlers
 from app.log import configure_logging
@@ -16,6 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="OPSiB receipt-shortfall service", version="0.1.0")
     app.state.settings = settings
+    app.state.summary_provider = DisabledProvider()  # no live model; swap in a provider to enable (D-49)
     install_error_handlers(app)
 
     @app.get("/health", tags=["ops"])
@@ -24,5 +26,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(imports.router)
     app.include_router(detection.router)
+    app.include_router(exceptions.router)
     app.include_router(tasks.router)
     return app
